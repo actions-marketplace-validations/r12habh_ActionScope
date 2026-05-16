@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        run: pytest tests/ -v --cov=actionscope --cov-report=term-missing
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: false
+
+  self-scan:
+    name: ActionScope Self-Scan
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ActionScope
+        run: pip install -e .
+
+      - name: Scan this repo (terminal output)
+        run: actionscope scan . --output-format terminal
+
+      - name: Scan this repo (JSON)
+        run: actionscope scan . --output-format json --output-file self-scan.json
+
+      - name: Show self-scan summary
+        run: |
+          python3 -c "
+          import json
+          d = json.load(open('self-scan.json'))
+          print(f'Overall Risk: {d[\"overall_risk\"]}')
+          print(f'Credential Sources: {d[\"summary\"][\"credential_sources\"]}')
+          print(f'Note: This repo intentionally has minimal permissions.')
+          "
+
+      - name: Upload self-scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-scan-results
+          path: self-scan.json
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff
+      - run: ruff check actionscope/ tests/

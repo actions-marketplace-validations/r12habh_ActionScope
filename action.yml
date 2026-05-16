@@ -1,0 +1,109 @@
+name: 'ActionScope'
+description: 'Map the AWS blast radius of GitHub Actions workflows and AI agent configs'
+author: 'Rishabh Singh'
+
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  path:
+    description: 'Path to the repository root to scan'
+    required: false
+    default: '.'
+  fail-on:
+    description: 'Fail the action if overall risk is at or above this level (critical, high, medium, low)'
+    required: false
+    default: 'high'
+  output-format:
+    description: 'Output format: terminal, json, or markdown'
+    required: false
+    default: 'terminal'
+  comment-pr:
+    description: 'Post findings as a PR comment (requires pull-requests: write permission)'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'GitHub token for posting PR comments'
+    required: false
+    default: '${{ github.token }}'
+  version:
+    description: 'ActionScope version to install (default: latest)'
+    required: false
+    default: ''
+
+outputs:
+  overall-risk:
+    description: 'The overall risk level found (critical, high, medium, low, info)'
+    value: ${{ steps.scan.outputs.overall-risk }}
+  findings-json:
+    description: 'JSON string of all findings'
+    value: ${{ steps.scan.outputs.findings-json }}
+  credential-sources-count:
+    description: 'Number of AWS credential sources found'
+    value: ${{ steps.scan.outputs.credential-sources-count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install ActionScope
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          pip install "actionscope==${{ inputs.version }}"
+        else
+          pip install actionscope
+        fi
+
+    - name: Run ActionScope
+      id: scan
+      shell: bash
+      run: |
+        actionscope scan ${{ inputs.path }} \
+          --output-format json \
+          --output-file /tmp/actionscope-results.json || true
+
+        if [ -f /tmp/actionscope-results.json ]; then
+          RISK=$(python3 -c "
+        import json
+        d = json.load(open('/tmp/actionscope-results.json'))
+        print(d.get('overall_risk', 'info'))
+          ")
+          COUNT=$(python3 -c "
+        import json
+        d = json.load(open('/tmp/actionscope-results.json'))
+        print(d.get('summary', {}).get('credential_sources', 0))
+          ")
+          echo "overall-risk=$RISK" >> "$GITHUB_OUTPUT"
+          {
+            echo 'findings-json<<JSON_EOF'
+            cat /tmp/actionscope-results.json
+            echo JSON_EOF
+          } >> "$GITHUB_OUTPUT"
+          echo "credential-sources-count=$COUNT" >> "$GITHUB_OUTPUT"
+        fi
+
+
+    - name: Post PR comment
+      if: inputs.comment-pr == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        MARKDOWN=$(actionscope scan ${{ inputs.path }} --output-format markdown 2>/dev/null || echo "ActionScope scan failed")
+        gh pr comment ${{ github.event.pull_request.number }} \
+          --body "$MARKDOWN" \
+          --edit-last 2>/dev/null || \
+        gh pr comment ${{ github.event.pull_request.number }} \
+          --body "$MARKDOWN"
+
+    - name: Fail on risk level
+      if: inputs.fail-on != ''
+      shell: bash
+      run: |
+        actionscope scan ${{ inputs.path }} --fail-on ${{ inputs.fail-on }}

@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:DeleteBucket"],
+      "Resource": "arn:aws:s3:::example-bucket"
+    },
+    {
+      "Effect": "Deny",
+      "Action": "iam:PassRole",
+      "Resource": "*"
+    }
+  ]
+}

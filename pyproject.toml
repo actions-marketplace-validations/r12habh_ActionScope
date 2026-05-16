@@ -1,0 +1,96 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "actionscope"
+version = "0.1.0"
+description = "Map the AWS blast radius of GitHub Actions workflows"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Rishabh Singh", email = "your@email.com"}]
+keywords = [
+  "aws",
+  "github-actions",
+  "security",
+  "iam",
+  "devops",
+  "cicd",
+  "blast-radius",
+  "devsecops",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "Topic :: Security",
+  "Topic :: Software Development :: Build Tools",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+dependencies = [
+  "click>=8.0",
+  "rich>=13.0",
+  "pyyaml>=6.0",
+  "python-hcl2>=4.0",
+  "policy-sentry>=0.12.0",
+]
+
+[project.optional-dependencies]
+aws = ["boto3>=1.26"]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.1.0",
+  "moto[iam]>=5.0",
+  "build>=1.0",
+  "hatchling>=1.25",
+  "twine>=5.0",
+]
+research = ["requests>=2.31", "tqdm>=4.66"]
+
+[project.urls]
+Homepage = "https://github.com/r12habh/ActionScope"
+Documentation = "https://github.com/r12habh/ActionScope#readme"
+Repository = "https://github.com/r12habh/ActionScope"
+Issues = "https://github.com/r12habh/ActionScope/issues"
+
+[project.scripts]
+actionscope = "actionscope.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["actionscope"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/actionscope",
+  "/action.yml",
+  "/CHANGELOG.md",
+  "/CONTRIBUTING.md",
+  "/docs",
+  "/LICENSE",
+  "/pyproject.toml",
+  "/README.md",
+  "/research/FINDINGS.md",
+  "/research/README.md",
+  "/research/generate_report.py",
+  "/research/launch_posts.md",
+  "/research/methodology.md",
+  "/research/scan_public_repos.py",
+  "/scripts",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"

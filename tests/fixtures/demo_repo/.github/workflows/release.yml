@@ -1,0 +1,26 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions: "write-all"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/github-release-role
+          aws-region: us-east-1
+
+      - name: Publish npm package
+        run: npm publish
+
+      - name: Create GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes

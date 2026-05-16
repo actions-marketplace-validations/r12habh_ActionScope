@@ -1,0 +1,27 @@
+name: Bug Report
+description: Something doesn't work correctly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      placeholder: |
+        1. Run: actionscope scan /path/to/repo
+        2. With these workflow files: ...
+        3. Expected: ...
+        4. Actual: ...
+  - type: input
+    id: version
+    attributes:
+      label: ActionScope version
+      placeholder: "actionscope --version"
+  - type: dropdown
+    id: output-format
+    attributes:
+      label: Output format used
+      options: ["terminal", "json", "markdown"]

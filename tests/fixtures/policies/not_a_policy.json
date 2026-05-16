@@ -1,0 +1,5 @@
+{
+  "name": "example",
+  "enabled": true,
+  "items": ["not", "iam", "policy"]
+}

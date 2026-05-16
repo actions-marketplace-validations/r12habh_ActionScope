@@ -1,0 +1,21 @@
+name: New IAM Risk Check
+description: Propose detecting a new dangerous IAM action or pattern
+labels: ["new-check"]
+body:
+  - type: input
+    id: action
+    attributes:
+      label: IAM action(s)
+      placeholder: "iam:CreateLoginProfile"
+  - type: textarea
+    id: risk
+    attributes:
+      label: Why is this risky?
+  - type: textarea
+    id: attack
+    attributes:
+      label: Example attack scenario
+  - type: input
+    id: reference
+    attributes:
+      label: Reference (Rhino Security, AWS docs, CVE, etc.)

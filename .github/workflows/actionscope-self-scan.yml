@@ -1,0 +1,36 @@
+name: ActionScope Self-Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  self-scan:
+    name: Scan this repo with ActionScope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ActionScope (from source)
+        run: pip install -e ".[dev]"
+
+      - name: Run ActionScope on this repo
+        run: |
+          actionscope scan . --output-format terminal
+          actionscope scan . --output-format json --output-file /tmp/self-scan.json
+
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: actionscope-self-scan
+          path: /tmp/self-scan.json

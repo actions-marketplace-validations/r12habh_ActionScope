@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # needed for GitHub Release creation
+  id-token: write  # needed for PyPI trusted publishing
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    environment: release  # requires manual approval in GitHub settings
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Run tests before release
+        run: |
+          pip install -e ".[dev]"
+          pytest tests/ -v
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package
+        run: twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # Uses trusted publishing; no API token needed.
+        # Requires setting up trusted publisher on PyPI first.
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: |
+            ## ActionScope ${{ github.ref_name }}
+
+            ### Install
+            ```bash
+            pip install actionscope==${{ github.ref_name }}
+            ```
+
+            ### What's New
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+          files: dist/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
