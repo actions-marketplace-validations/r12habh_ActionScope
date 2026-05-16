@@ -109,5 +109,5 @@ Key findings from May 2026:
 
 ## Built By
 
-Rishabh Singh — AWS Security Engineer.
+Rishabh Singh.
 [GitHub](https://github.com/r12habh)
