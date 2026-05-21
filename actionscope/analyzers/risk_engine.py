@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import sys
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from actionscope.analyzers.ai_agent_injection import scan_for_ai_agent_injection
+from actionscope.analyzers.artifact_poisoning import scan_for_artifact_poisoning
+from actionscope.analyzers.oidc_trust import scan_oidc_trust_policies
 from actionscope.analyzers.privesc_detector import detect_privesc_paths
+from actionscope.analyzers.script_injection import scan_workflows_for_injection
 from actionscope.models import (
+    AiAgentInjectionFinding,
+    ArtifactPoisoningFinding,
     AwsCredentialSource,
     GitHubTokenPermission,
+    OidcTrustFinding,
     PolicyFinding,
     RiskLevel,
     ScanResult,
+    ScriptInjectionFinding,
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
     get_unmatched_findings,
@@ -128,6 +137,10 @@ def compute_overall_risk(
     bindings: list[WorkflowCredentialBinding],
     github_token_perms: list[GitHubTokenPermission],
     unmatched_policy_findings: list[PolicyFinding],
+    oidc_trust_findings: list[OidcTrustFinding] | None = None,
+    script_injection_findings: list[ScriptInjectionFinding] | None = None,
+    artifact_poisoning_findings: list[ArtifactPoisoningFinding] | None = None,
+    ai_agent_injection_findings: list[AiAgentInjectionFinding] | None = None,
 ) -> RiskLevel:
     """Compute the highest risk across bindings, token perms, and policies."""
     binding_risks = [
@@ -143,9 +156,19 @@ def compute_overall_risk(
     unmatched_risks = [
         finding.overall_risk for finding in unmatched_policy_findings
     ]
+    detector_risks = [
+        finding.risk_level
+        for findings in (
+            oidc_trust_findings or [],
+            script_injection_findings or [],
+            artifact_poisoning_findings or [],
+            ai_agent_injection_findings or [],
+        )
+        for finding in findings
+    ]
 
     return max(
-        binding_risks + token_risks + unmatched_risks,
+        binding_risks + token_risks + unmatched_risks + detector_risks,
         default=RiskLevel.INFO,
     )
 
@@ -177,16 +200,36 @@ def build_scan_result(
     for finding in policy_findings:
         finding.privesc_paths = detect_privesc_paths(finding, finding.source_file)
 
+    oidc_trust_findings, oidc_errors = _safe_scan_oidc(repo_path)
+    script_injection_findings, script_errors = _safe_scan_script_injection(repo_path)
+    artifact_poisoning_findings, artifact_errors = _safe_scan_artifact_poisoning(
+        repo_path
+    )
+    ai_agent_injection_findings, ai_errors = _safe_scan_ai_agent_injection(
+        repo_path,
+        credential_sources,
+        github_token_perms,
+    )
+    errors.extend(oidc_errors + script_errors + artifact_errors + ai_errors)
+
     bindings = build_bindings(credential_sources, policy_findings, repo_path)
     unmatched_findings = get_unmatched_findings(bindings, policy_findings)
     overall_risk = compute_overall_risk(
         bindings,
         github_token_perms,
         unmatched_findings,
+        oidc_trust_findings,
+        script_injection_findings,
+        artifact_poisoning_findings,
+        ai_agent_injection_findings,
     )
     workflow_count = len(
         {source.workflow_file for source in credential_sources}
         | {perm.workflow_file for perm in github_token_perms}
+        | {finding.workflow_file for finding in normalized_unpinned}
+        | {finding.workflow_file for finding in script_injection_findings}
+        | {finding.workflow_file for finding in artifact_poisoning_findings}
+        | {finding.workflow_file for finding in ai_agent_injection_findings}
     )
 
     result = ScanResult(
@@ -195,6 +238,10 @@ def build_scan_result(
         credential_sources=credential_sources,
         github_token_permissions=github_token_perms,
         unpinned_actions=normalized_unpinned,
+        oidc_trust_findings=oidc_trust_findings,
+        script_injection_findings=script_injection_findings,
+        artifact_poisoning_findings=artifact_poisoning_findings,
+        ai_agent_injection_findings=ai_agent_injection_findings,
         policy_findings=policy_findings,
         bindings=bindings,
         errors=errors,
@@ -260,3 +307,50 @@ def _file_contains(filepath: str, needle: str) -> bool:
 
 def _warn(message: str) -> None:
     print(f"Warning: {message}", file=sys.stderr)
+
+
+def _safe_scan_oidc(repo_path: str) -> tuple[list[OidcTrustFinding], list[str]]:
+    try:
+        return scan_oidc_trust_policies(repo_path)
+    except Exception as exc:
+        return [], [_scan_error("OIDC trust policy scan", exc)]
+
+
+def _safe_scan_script_injection(
+    repo_path: str,
+) -> tuple[list[ScriptInjectionFinding], list[str]]:
+    try:
+        return scan_workflows_for_injection(repo_path)
+    except Exception as exc:
+        return [], [_scan_error("script injection scan", exc)]
+
+
+def _safe_scan_artifact_poisoning(
+    repo_path: str,
+) -> tuple[list[ArtifactPoisoningFinding], list[str]]:
+    try:
+        return scan_for_artifact_poisoning(repo_path)
+    except Exception as exc:
+        return [], [_scan_error("artifact poisoning scan", exc)]
+
+
+def _safe_scan_ai_agent_injection(
+    repo_path: str,
+    credential_sources: list[AwsCredentialSource],
+    github_token_perms: list[GitHubTokenPermission],
+) -> tuple[list[AiAgentInjectionFinding], list[str]]:
+    try:
+        return scan_for_ai_agent_injection(
+            repo_path,
+            credential_sources=credential_sources,
+            github_token_perms=github_token_perms,
+        )
+    except Exception as exc:
+        return [], [_scan_error("AI agent injection scan", exc)]
+
+
+def _scan_error(scan_name: str, exc: Exception) -> str:
+    return (
+        f"Scan incomplete: {scan_name} failed with "
+        f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+    )

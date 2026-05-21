@@ -6,12 +6,16 @@ import sys
 from pathlib import Path
 
 from actionscope.models import (
+    AiAgentInjectionFinding,
+    ArtifactPoisoningFinding,
     AwsCredentialSource,
     GitHubTokenPermission,
     IamAction,
+    OidcTrustFinding,
     PolicyFinding,
     RiskLevel,
     ScanResult,
+    ScriptInjectionFinding,
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
 )
@@ -35,6 +39,11 @@ RISK_DISPLAY = {
 
 def _workflow_basename(path: str) -> str:
     return Path(path).name
+
+
+def _md_cell(value: object) -> str:
+    text = str(value)
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "\\`")
 
 
 def _auth_display(source: AwsCredentialSource) -> str:
@@ -68,9 +77,9 @@ def _critical_concern_lines(finding: PolicyFinding) -> list[str]:
 
 def _iam_action_row(action: IamAction) -> str:
     risk = RISK_DISPLAY.get(action.risk_level, action.risk_level.name)
-    al = action.access_level.replace("|", "\\|")
+    al = _md_cell(action.access_level)
     return (
-        f"| `{action.action}` | {al} | {risk} |"
+        f"| `{_md_cell(action.action)}` | {al} | {risk} |"
     )
 
 
@@ -82,10 +91,10 @@ def _token_workflow_cell(permission: GitHubTokenPermission) -> str:
 
 
 def _token_table_row(permission: GitHubTokenPermission) -> str:
-    scope = permission.scope.replace("|", "\\|")
-    access = permission.access.replace("|", "\\|")
+    scope = _md_cell(permission.scope)
+    access = _md_cell(permission.access)
     risk = RISK_DISPLAY[permission.risk_level]
-    wf = _token_workflow_cell(permission)
+    wf = _md_cell(_token_workflow_cell(permission))
     return f"| `{scope}` | {access} | {wf} | {risk} |"
 
 
@@ -188,6 +197,7 @@ def _pin_type_label(pin_type: str) -> str:
     return {
         "tag": "version tag",
         "branch": "branch",
+        "short_sha": "short SHA",
         "unresolvable": "missing ref",
     }.get(pin_type, pin_type)
 
@@ -203,10 +213,10 @@ def _unpinned_section(findings: list[UnpinnedActionFinding]) -> str:
         "|--------|----------|-----|------|",
     ]
     for finding in findings:
-        workflow = _workflow_basename(finding.workflow_file)
-        action = finding.uses.replace("|", "\\|")
-        job = finding.job_name.replace("|", "\\|")
-        pin_type = _pin_type_label(finding.pin_type)
+        workflow = _md_cell(_workflow_basename(finding.workflow_file))
+        action = _md_cell(finding.uses)
+        job = _md_cell(finding.job_name)
+        pin_type = _md_cell(_pin_type_label(finding.pin_type))
         lines.append(f"| `{action}` | {workflow} | {job} | {pin_type} |")
 
     lines.extend(
@@ -215,6 +225,107 @@ def _unpinned_section(findings: list[UnpinnedActionFinding]) -> str:
             "> ⚠️ Version tags are mutable. Pin to SHA to prevent "
             "supply-chain attacks.",
             "> Reference: the March 2025 tj-actions/changed-files compromise.",
+            "",
+            "---",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _oidc_trust_section(findings: list[OidcTrustFinding]) -> str:
+    if not findings:
+        return ""
+    lines = [
+        "### OIDC Trust Issues",
+        "",
+        "| Role | Issue | Risk | Evidence |",
+        "|------|-------|------|----------|",
+    ]
+    for finding in findings:
+        role = _md_cell(finding.role_name)
+        issue = _md_cell(finding.issue_description)
+        evidence = _md_cell(finding.evidence)
+        lines.append(
+            f"| `{role}` | {issue} | "
+            f"{RISK_DISPLAY[finding.risk_level]} | `{evidence}` |"
+        )
+    lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def _script_injection_section(findings: list[ScriptInjectionFinding]) -> str:
+    if not findings:
+        return ""
+    lines = [
+        "### Script Injection Risks",
+        "",
+        "| Expression | Workflow | Job | Risk |",
+        "|------------|----------|-----|------|",
+    ]
+    for finding in findings:
+        workflow = _md_cell(_workflow_basename(finding.workflow_file))
+        expression = _md_cell(finding.untrusted_expression)
+        job = _md_cell(finding.job_name)
+        lines.append(
+            f"| `{expression}` | {workflow} | {job} | "
+            f"{RISK_DISPLAY[finding.risk_level]} |"
+        )
+    lines.extend(
+        [
+            "",
+            "> ⚠️ Direct GitHub context interpolation in `run:` can execute "
+            "attacker-controlled shell content. Set values through `env:` first.",
+            "",
+            "---",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _artifact_poisoning_section(findings: list[ArtifactPoisoningFinding]) -> str:
+    if not findings:
+        return ""
+    lines = [
+        "### Artifact Poisoning Risks",
+        "",
+        "| Workflow | Job | Executes Artifact | Secrets | Risk |",
+        "|----------|-----|-------------------|---------|------|",
+    ]
+    for finding in findings:
+        workflow = _md_cell(_workflow_basename(finding.workflow_file))
+        job = _md_cell(finding.job_name)
+        lines.append(
+            f"| {workflow} | {job} | {finding.executes_artifacts} | "
+            f"{finding.has_secret_access} | {RISK_DISPLAY[finding.risk_level]} |"
+        )
+    lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def _ai_agent_section(findings: list[AiAgentInjectionFinding]) -> str:
+    if not findings:
+        return ""
+    lines = [
+        "### AI Agent Prompt Injection Surfaces",
+        "",
+        "| Agent | Workflow | Untrusted Trigger | Write Access | AWS Access | Risk |",
+        "|-------|----------|-------------------|--------------|------------|------|",
+    ]
+    for finding in findings:
+        workflow = _md_cell(_workflow_basename(finding.workflow_file))
+        agent_type = _md_cell(finding.agent_type)
+        lines.append(
+            f"| `{agent_type}` | {workflow} | {finding.untrusted_trigger} | "
+            f"{finding.has_write_permissions} | {finding.has_aws_secret_access} | "
+            f"{RISK_DISPLAY[finding.risk_level]} |"
+        )
+    lines.extend(
+        [
+            "",
+            "> Reference: AI agents that read PR or issue content can be prompt "
+            "injected into exfiltrating secrets or modifying code.",
             "",
             "---",
             "",
@@ -264,6 +375,10 @@ def to_markdown(result: ScanResult) -> str:
 
     token_part = _github_token_section(result)
     unpinned_part = _unpinned_section(result.unpinned_actions)
+    oidc_part = _oidc_trust_section(result.oidc_trust_findings)
+    script_part = _script_injection_section(result.script_injection_findings)
+    artifact_part = _artifact_poisoning_section(result.artifact_poisoning_findings)
+    ai_part = _ai_agent_section(result.ai_agent_injection_findings)
 
     summary = (
         "### Summary\n\n"
@@ -271,7 +386,17 @@ def to_markdown(result: ScanResult) -> str:
         "> Generated by [ActionScope](https://github.com/r12habh/ActionScope)\n"
     )
 
-    return header + findings_body + token_part + unpinned_part + summary
+    return (
+        header
+        + findings_body
+        + token_part
+        + oidc_part
+        + script_part
+        + artifact_part
+        + ai_part
+        + unpinned_part
+        + summary
+    )
 
 
 def to_markdown_from_dict(data: dict) -> str:
@@ -303,12 +428,14 @@ def to_markdown_from_dict(data: dict) -> str:
     findings = data.get("findings", [])
     if findings:
         for finding in findings:
-            workflow = _workflow_basename(str(finding.get("workflow_file", "")))
-            job = str(finding.get("job_name") or "(default)")
-            role = finding.get("role_arn") or "(none)"
-            auth_type = str(finding.get("auth_type", "unknown"))
-            policy_source = str(finding.get("policy_source", "unknown"))
-            match_confidence = str(finding.get("match_confidence", "none"))
+            workflow = _md_cell(
+                _workflow_basename(str(finding.get("workflow_file", "")))
+            )
+            job = _md_cell(str(finding.get("job_name") or "(default)"))
+            role = _md_cell(finding.get("role_arn") or "(none)")
+            auth_type = _md_cell(finding.get("auth_type", "unknown"))
+            policy_source = _md_cell(finding.get("policy_source", "unknown"))
+            match_confidence = _md_cell(finding.get("match_confidence", "none"))
             finding_risk = str(finding.get("overall_risk", "info")).lower()
             finding_risk_display = {
                 "critical": "🔴 CRITICAL",
@@ -363,8 +490,9 @@ def to_markdown_from_dict(data: dict) -> str:
                         "info": "ℹ️ INFO",
                     }.get(risk, risk.upper())
                     lines.append(
-                        f"| `{action.get('action', '')}` | "
-                        f"{action.get('access_level', '')} | {action_risk} |"
+                        f"| `{_md_cell(action.get('action', ''))}` | "
+                        f"{_md_cell(action.get('access_level', ''))} | "
+                        f"{action_risk} |"
                     )
             else:
                 lines.append("| _No actions in policy_ | | |")
@@ -391,11 +519,13 @@ def to_markdown_from_dict(data: dict) -> str:
                 "low": "🟢 LOW",
                 "info": "ℹ️ INFO",
             }.get(risk, risk.upper())
-            workflow = _workflow_basename(str(permission.get("workflow_file", "")))
-            job = permission.get("job_name") or "workflow level"
+            workflow = _md_cell(
+                _workflow_basename(str(permission.get("workflow_file", "")))
+            )
+            job = _md_cell(permission.get("job_name") or "workflow level")
             lines.append(
-                f"| `{permission.get('scope', '')}` | "
-                f"{permission.get('access', '')} | {workflow} ({job}) | "
+                f"| `{_md_cell(permission.get('scope', ''))}` | "
+                f"{_md_cell(permission.get('access', ''))} | {workflow} ({job}) | "
                 f"{token_risk} |"
             )
         lines.extend(["", "---", ""])
@@ -411,11 +541,13 @@ def to_markdown_from_dict(data: dict) -> str:
             ]
         )
         for finding in unpinned:
-            workflow = _workflow_basename(str(finding.get("workflow_file", "")))
+            workflow = _md_cell(
+                _workflow_basename(str(finding.get("workflow_file", "")))
+            )
             lines.append(
-                f"| `{finding.get('uses', '')}` | {workflow} | "
-                f"{finding.get('job_name', '')} | "
-                f"{_pin_type_label(str(finding.get('pin_type', '')))} |"
+                f"| `{_md_cell(finding.get('uses', ''))}` | {workflow} | "
+                f"{_md_cell(finding.get('job_name', ''))} | "
+                f"{_md_cell(_pin_type_label(str(finding.get('pin_type', ''))))} |"
             )
         lines.extend(
             [
@@ -428,6 +560,48 @@ def to_markdown_from_dict(data: dict) -> str:
                 "",
             ]
         )
+
+    for key, title in (
+        ("oidc_trust_findings", "OIDC Trust Issues"),
+        ("script_injection_findings", "Script Injection Risks"),
+        ("artifact_poisoning_findings", "Artifact Poisoning Risks"),
+        ("ai_agent_injection_findings", "AI Agent Prompt Injection Surfaces"),
+    ):
+        detector_findings = data.get(key, [])
+        if detector_findings:
+            lines.extend(
+                [
+                    f"### {title}",
+                    "",
+                    "| Finding | Workflow/Source | Risk |",
+                    "|---------|-----------------|------|",
+                ]
+            )
+            for finding in detector_findings:
+                risk = str(finding.get("risk_level", "info")).lower()
+                risk_label = {
+                    "critical": "🔴 CRITICAL",
+                    "high": "🟠 HIGH",
+                    "medium": "🟡 MEDIUM",
+                    "low": "🟢 LOW",
+                    "info": "ℹ️ INFO",
+                }.get(risk, risk.upper())
+                title_text = (
+                    finding.get("issue_description")
+                    or finding.get("description")
+                    or finding.get("agent_type")
+                    or "finding"
+                )
+                location = (
+                    finding.get("workflow_file")
+                    or finding.get("source_file")
+                    or ""
+                )
+                lines.append(
+                    f"| {_md_cell(title_text)} | `{_md_cell(location)}` | "
+                    f"{risk_label} |"
+                )
+            lines.extend(["", "---", ""])
 
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     for finding in findings:
